@@ -1,5 +1,41 @@
 # ----------------------------
-# Resume Optimization Agent - Full Version
+# Resume Optimization Agent - Full Version with Setup
+# ----------------------------
+
+# ----------------------------
+# Setup: Install dependencies and NLTK data
+# ----------------------------
+import subprocess
+import sys
+
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+required_packages = [
+    "streamlit",
+    "beautifulsoup4",
+    "requests",
+    "PyMuPDF",
+    "python-docx",
+    "nltk",
+    "sentence-transformers"
+]
+
+for pkg in required_packages:
+    try:
+        __import__(pkg.split('-')[0])
+    except ImportError:
+        install(pkg)
+
+# NLTK setup
+import nltk
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
+
+# ----------------------------
+# Imports
 # ----------------------------
 import re
 import json
@@ -9,10 +45,8 @@ import streamlit as st
 from sentence_transformers import SentenceTransformer, util
 import fitz  # PyMuPDF for PDF parsing
 import docx
-import nltk
 from nltk.tokenize import sent_tokenize
 
-nltk.download('punkt')
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # ----------------------------
@@ -85,24 +119,37 @@ def parse_job_semantic(url):
             "qualifications": qualifications}
 
 # ----------------------------
-# 3. Company Research
+# 3. Company Research with News & Culture
 # ----------------------------
-def get_company_info(company_name):
-    search_url = f"https://en.wikipedia.org/wiki/{company_name.replace(' ','_')}"
-    response = requests.get(search_url)
-    if response.status_code != 200:
-        return {"name": company_name, "industry":"N/A", "size":"N/A", "culture":"N/A", "recent_news":[]}
+def get_company_info_with_news(company_name):
+    # Wikipedia summary
+    wiki_url = f"https://en.wikipedia.org/wiki/{company_name.replace(' ','_')}"
+    response = requests.get(wiki_url)
+    description = ""
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.text, 'html.parser')
+        description = soup.find('p').get_text() if soup.find('p') else ""
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    description = soup.find('p').get_text() if soup.find('p') else ""
     size_match = re.findall(r'\b(\d{2,5}) employees\b', description)
     industry_match = re.findall(r'\b(software|technology|finance|healthcare|SaaS|telecom)\b', description, re.I)
 
-    return {"name": company_name,
-            "industry": industry_match[0] if industry_match else "N/A",
-            "size": size_match[0] if size_match else "N/A",
-            "culture": "N/A",
-            "recent_news": []}
+    # Culture keywords
+    culture_keywords = re.findall(r'\b(?:innovative|collaborative|dynamic|diverse|inclusive|fast-paced|creative)\b', description, re.I)
+    culture_summary = ", ".join(list(set(culture_keywords))) if culture_keywords else "N/A"
+
+    # Google News headlines (basic scraping)
+    news_url = f"https://news.google.com/search?q={company_name.replace(' ','%20')}&hl=en-US&gl=US&ceid=US:en"
+    news_resp = requests.get(news_url)
+    news_soup = BeautifulSoup(news_resp.text, 'html.parser')
+    headlines = [a.get_text() for a in news_soup.find_all('a') if a.get_text()][:5]
+
+    return {
+        "name": company_name,
+        "industry": industry_match[0] if industry_match else "N/A",
+        "size": size_match[0] if size_match else "N/A",
+        "culture": culture_summary,
+        "recent_news": headlines
+    }
 
 # ----------------------------
 # 4. Semantic Skill Matching
@@ -154,7 +201,7 @@ def optimization_suggestions(resume, job):
 # ----------------------------
 # 7. Streamlit Interface
 # ----------------------------
-st.title("Resume Optimization Agent - Full Version")
+st.title("Resume Optimization Agent - Full Version with News & Culture")
 
 uploaded_file = st.file_uploader("Upload your resume (PDF or DOCX)", type=['pdf','docx'])
 job_url = st.text_input("Enter Job Posting URL")
@@ -171,8 +218,8 @@ if uploaded_file and job_url and company_name:
     # Job parsing
     job_data = parse_job_semantic(job_url)
 
-    # Company info
-    company_info = get_company_info(company_name)
+    # Company info with news
+    company_info = get_company_info_with_news(company_name)
 
     # Scores & Optimization
     scores = calculate_scores(resume_data, job_data)
@@ -191,7 +238,7 @@ if uploaded_file and job_url and company_name:
     st.header("Optimization Suggestions")
     st.json(report["optimization"])
 
-    st.header("Company Info")
+    st.header("Company Info & Recent News")
     st.json(report["company"])
 
     # Save JSON report
